@@ -1,0 +1,1360 @@
+{
+  "name": "Google Sheets to Social Media Publisher",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "8d396fde-1aac-4109-8056-2d75db0fde1f",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1088,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE",
+          "mode": "list",
+          "cachedResultName": "Marketing Automation",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Publisher",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Action",
+              "lookupValue": "Ready"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": false
+        }
+      },
+      "id": "d7943b06-27f3-4e33-bc5f-ac63ac292fb2",
+      "name": "Read Ready Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -880,
+        176
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "V0qxyjPZsvSC8EFM",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = Date.now();\nconst out = [];\n\nfor (const item of $input.all()) {\n  const row = item.json;\n\n  // Only process Ready rows\n  const action = String(row['Action'] ?? '').trim().toLowerCase();\n  if (action !== 'ready') continue;\n\n  // -----------------------------\n  // SCHEDULE\n  // Expected:\n  // 8/12/2026 15:30:00\n  // Manila time (UTC+8)\n  // -----------------------------\n\n  const schedule = String(row['Schedule'] ?? '').trim();\n\n  let scheduledAt = null;\n\n  if (schedule) {\n    const match = schedule.match(\n      /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})\\s+(\\d{1,2}):(\\d{2}):(\\d{2})$/\n    );\n\n    if (!match) {\n      out.push({\n        json: {\n          ...row,\n          'DEBUG Error': 'Schedule format did not match',\n          'DEBUG Schedule Raw': schedule\n        }\n      });\n\n      continue;\n    }\n\n    const [\n      ,\n      month,\n      day,\n      year,\n      hour,\n      minute,\n      second\n    ] = match;\n\n    // Convert Manila time to UTC\n    scheduledAt = Date.UTC(\n      Number(year),\n      Number(month) - 1,\n      Number(day),\n      Number(hour) - 8,\n      Number(minute),\n      Number(second)\n    );\n  }\n\n  // -----------------------------\n  // PLATFORM\n  // -----------------------------\n\n  const platform = String(row['Platform'] ?? '')\n    .trim()\n    .toLowerCase();\n\n  // -----------------------------\n  // EXISTING STATUS\n  // -----------------------------\n\n  const fbStatus = String(row['FB Status'] ?? '')\n    .trim()\n    .toLowerCase();\n\n  const igStatus = String(row['IG Status'] ?? '')\n    .trim()\n    .toLowerCase();\n\n  const liStatus = String(row['LinkedIn Status'] ?? '')\n    .trim()\n    .toLowerCase();\n\n  // -----------------------------\n  // DUE?\n  // -----------------------------\n\n  const due =\n    scheduledAt === null ||\n    scheduledAt <= now;\n\n  // -----------------------------\n  // FINISHED?\n  // -----------------------------\n\n  const fbFinished = fbStatus === 'finished';\n  const igFinished = igStatus === 'finished';\n  const liFinished = liStatus === 'finished';\n\n  // -----------------------------\n  // STATUS\n  //\n  // Future + not finished = pending\n  // Due + not finished    = processing\n  // Finished              = finished\n  // -----------------------------\n\n  let newFbStatus = fbStatus;\n  let newIgStatus = igStatus;\n  let newLiStatus = liStatus;\n\n  if (platform.includes('facebook')) {\n    newFbStatus = fbFinished\n      ? 'finished'\n      : due\n        ? 'processing'\n        : 'pending';\n  }\n\n  if (platform.includes('instagram')) {\n    newIgStatus = igFinished\n      ? 'finished'\n      : due\n        ? 'processing'\n        : 'pending';\n  }\n\n  if (platform.includes('linkedin')) {\n    newLiStatus = liFinished\n      ? 'finished'\n      : due\n        ? 'processing'\n        : 'pending';\n  }\n\n  // -----------------------------\n  // OUTPUT\n  // -----------------------------\n\n  out.push({\n    json: {\n      ...row,\n\n      'FB Status': newFbStatus,\n      'IG Status': newIgStatus,\n      'LinkedIn Status': newLiStatus,\n\n      'Last Status Update': new Date().toISOString(),\n\n      // These tell the workflow whether\n      // each platform should actually post.\n      postFacebook:\n        platform.includes('facebook') &&\n        due &&\n        !fbFinished\n          ? 'yes'\n          : 'no',\n\n      postInstagram:\n        platform.includes('instagram') &&\n        due &&\n        !igFinished\n          ? 'yes'\n          : 'no',\n\n      postLinkedIn:\n        platform.includes('linkedin') &&\n        due &&\n        !liFinished\n          ? 'yes'\n          : 'no',\n\n      // Temporary debugging\n      'DEBUG Due': due,\n      'DEBUG Schedule UTC': scheduledAt !== null\n        ? new Date(scheduledAt).toISOString()\n        : 'none',\n      'DEBUG Now UTC': new Date(now).toISOString()\n    }\n  });\n}\n\nreturn out;\n\n"
+      },
+      "id": "11c01fba-6085-45bc-a094-166a9591b8b7",
+      "name": "Prepare Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const preparedRows = $('Prepare Rows').all();\n\nreturn $input.all().filter(item => {\n  const postId = String(item.json.post_id);\n\n  const row = preparedRows.find(\n    p => String(p.json.post_id) === postId\n  );\n\n  return row?.json.postLinkedIn === 'yes';\n});"
+      },
+      "id": "bfa4bd3d-c4b6-4a49-93b2-ce165230ec8b",
+      "name": "Filter LinkedIn",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const err = $json.error;\nconst row = $('Filter LinkedIn').item.json;\n\nreturn {\n  post_id: row.post_id,\n  platform: 'LinkedIn',\n  ok: !err,\n  status: err ? 'failed' : 'finished',\n  message: err\n    ? (err.message || String(err))\n    : 'Success',\n  'Last Status Update': new Date().toISOString()\n};"
+      },
+      "id": "7a4332e1-2076-4a2e-976f-3d2b3c5f19fb",
+      "name": "Tag LinkedIn Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "0822a20b-049e-4f04-a1e7-34fa8d773fdc",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2240,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const err = $json.error;\nconst row = $('Filter FB or IG').item.json;\n\nreturn {\n  post_id: row.post_id,\n  platform: 'Facebook',\n  ok: !err,\n  status: err ? 'failed' : 'finished',\n  message: err\n    ? (err.message || String(err))\n    : 'Success',\n  'Last Status Update': new Date().toISOString()\n};"
+      },
+      "id": "66e4cba2-2916-4f05-8b63-18fc96baec95",
+      "name": "Tag Facebook Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const err = $json.error;\nconst row = $('Filter FB or IG').item.json;\n\nreturn {\n  post_id: row.post_id,\n  platform: 'Instagram',\n  ok: !err,\n  status: err ? 'failed' : 'finished',\n  message: err\n    ? (err.message || String(err))\n    : 'Success',\n  'Last Status Update': new Date().toISOString()\n};"
+      },
+      "id": "ae971042-b5cf-4354-9a44-ef4153bfbc9d",
+      "name": "Tag Instagram Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const grouped = {};\n\nfor (const item of $input.all()) {\n  const data = item.json;\n  const postId = String(data.post_id);\n\n  if (!grouped[postId]) {\n    grouped[postId] = {\n      post_id: data.post_id,\n      Platform: data.Platform || '',\n      'FB Status': data['FB Status'] ?? null,\n      'IG Status': data['IG Status'] ?? null,\n      'LinkedIn Status': data['LinkedIn Status'] ?? null,\n      Action: 'Ready',\n      'Last Status Update': data['Last Status Update'] ?? null\n    };\n  }\n\n  if (data.platform === 'Facebook') {\n    grouped[postId]['FB Status'] = data.status;\n  }\n\n  if (data.platform === 'Instagram') {\n    grouped[postId]['IG Status'] = data.status;\n  }\n\n  if (data.platform === 'LinkedIn') {\n    grouped[postId]['LinkedIn Status'] = data.status;\n  }\n\n  const timestamp = data['Last Status Update'];\n\n  if (\n    timestamp &&\n    (\n      !grouped[postId]['Last Status Update'] ||\n      new Date(timestamp) >\n        new Date(grouped[postId]['Last Status Update'])\n    )\n  ) {\n    grouped[postId]['Last Status Update'] = timestamp;\n  }\n}\n\nfor (const post of Object.values(grouped)) {\n  const platform = String(post.Platform).toLowerCase();\n\n  const needsFacebook = platform.includes('facebook');\n  const needsInstagram = platform.includes('instagram');\n  const needsLinkedIn = platform.includes('linkedin');\n\n  const facebookDone =\n    !needsFacebook ||\n    String(post['FB Status']).toLowerCase() === 'finished';\n\n  const instagramDone =\n    !needsInstagram ||\n    String(post['IG Status']).toLowerCase() === 'finished';\n\n  const linkedInDone =\n    !needsLinkedIn ||\n    String(post['LinkedIn Status']).toLowerCase() === 'finished';\n\n  if (facebookDone && instagramDone && linkedInDone) {\n    post.Action = 'Completed';\n  }\n}\n\nreturn Object.values(grouped).map(post => ({\n  json: post\n}));"
+      },
+      "id": "68b22b7d-5a28-4636-aff9-fcd1630e4050",
+      "name": "Aggregate By Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2448,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE",
+          "mode": "list",
+          "cachedResultName": "Marketing Automation",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Publisher",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Remarks": "=",
+            "post_id": "={{ $json.post_id }}",
+            "LinkedIn Status": "={{ $json['LinkedIn Status'] }}",
+            "IG Status": "={{ $json['IG Status'] }}",
+            "FB Status": "={{ $json['FB Status'] }}",
+            "Last Status Update": "={{ new Date($json['Last Status Update']).toLocaleString('en-US', {\n  timeZone: 'Asia/Manila',\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit',\n  hour: 'numeric',\n  minute: '2-digit',\n  hour12: true\n}) }}",
+            "Action": "={{ $json.Action }}"
+          },
+          "matchingColumns": [
+            "post_id"
+          ],
+          "schema": [
+            {
+              "id": "post_id",
+              "displayName": "post_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Caption",
+              "displayName": "Caption",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Media (insert Google Drive Link)",
+              "displayName": "Media (insert Google Drive Link)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Action",
+              "displayName": "Action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Platform",
+              "displayName": "Platform",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Schedule",
+              "displayName": "Schedule",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "FB Status",
+              "displayName": "FB Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "IG Status",
+              "displayName": "IG Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "LinkedIn Status",
+              "displayName": "LinkedIn Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Status Update",
+              "displayName": "Last Status Update",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Remarks",
+              "displayName": "Remarks",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "a6d13d44-e34a-4923-9de1-f55a96dd1bf1",
+      "name": "Update Row Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2656,
+        192
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "V0qxyjPZsvSC8EFM",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const page = $json.data[0];\n\nreturn $input.all().map(item => ({\n  json: {\n    ...item.json,\n    fb_page_id: page.id,\n    fb_page_token: page.access_token\n  },\n  binary: item.binary\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        192
+      ],
+      "id": "d2277778-a409-436e-a190-a6e8721f677f",
+      "name": "Get Page Token"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v21.0/me/accounts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApiOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        864,
+        192
+      ],
+      "id": "4e7f0daf-0e58-4687-b783-8357f70c430d",
+      "name": "Request Token",
+      "credentials": {
+        "facebookGraphApiOAuth2Api": {
+          "id": "FrQbMjqAbOVjRiTY",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('Get Page Token').item.json.fb_page_id }}/feed",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $('Get Page Token').item.json.fb_page_token }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $('Filter FB or IG').item.json.Caption }}"
+            },
+            {
+              "name": "attached_media[0]",
+              "value": "={{ JSON.stringify({ media_fbid: $json.id }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1712,
+        192
+      ],
+      "id": "88d7256b-a259-4d4e-a158-09d48558101d",
+      "name": "Post to FB"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v21.0/me/accounts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApiOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        864,
+        464
+      ],
+      "id": "fdf6c41e-1466-4ef6-b74c-c3dfb38c0242",
+      "name": "Request Token (IG)",
+      "credentials": {
+        "facebookGraphApiOAuth2Api": {
+          "id": "FrQbMjqAbOVjRiTY",
+          "name": "Facebook Graph account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const page = item.json.data?.[0];\n\n  if (!page) {\n    throw new Error('Instagram page data not found');\n  }\n\n  return {\n    json: {\n      ...item.json,\n      fbig_account_id: page.id,\n      fbig_page_token: page.access_token\n    },\n    binary: item.binary\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        464
+      ],
+      "id": "a3f16582-c64b-419a-8acf-5f3054ffda82",
+      "name": "Get Page Token (IG)"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v23.0/{{ $json.data[0].id }}?fields=instagram_business_account",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $json.data[0].access_token }}"
+            },
+            {
+              "name": "fields",
+              "value": "instagram_business_account"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1232,
+        464
+      ],
+      "id": "61fa8af2-bf34-4c1b-8bf0-6577b16dfdf4",
+      "name": "Get Instagram Account"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.instagram_business_account.id }}/media",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $('Get Page Token (IG)').item.json.data[0].access_token }}"
+            },
+            {
+              "name": "image_url",
+              "value": "={{ $('Cloudinary').item.json.secure_url.replace('/upload/', '/upload/c_pad,w_1080,h_1350/') }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $('Prepare Rows').item.json.Caption }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1424,
+        464
+      ],
+      "id": "7c4417d1-e314-406c-9df6-010a61997994",
+      "name": "Create Instagram Container"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('Get Instagram Account').item.json.instagram_business_account.id }}/media_publish",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $('Get Page Token (IG)').item.json.data[0].access_token }}"
+            },
+            {
+              "name": "creation_id",
+              "value": "={{ $('Create Instagram Container').item.json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1776,
+        464
+      ],
+      "id": "1abfe09b-e5f3-426d-99a1-0d0dfdfcbaa1",
+      "name": "Post to IG"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linkedin.com/rest/posts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "linkedInOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Linkedin-Version",
+              "value": "202607"
+            },
+            {
+              "name": "X-Restli-Protocol-Version",
+              "value": "2.0.0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"author\": \"urn:li:organization:143131934\",\n  \"commentary\": \"{{ $('Prepare Rows').item.json.Caption }}\",\n  \"visibility\": \"PUBLIC\",\n  \"distribution\": {\n    \"feedDistribution\": \"MAIN_FEED\",\n    \"targetEntities\": [],\n    \"thirdPartyDistributionChannels\": []\n  },\n  \"content\": {\n    \"media\": {\n      \"id\": \"{{ $('Carry Binary').item.json.value.image }}\",\n      \"altText\": \"Image\"\n    }\n  },\n  \"lifecycleState\": \"PUBLISHED\",\n  \"isReshareDisabledByAuthor\": false\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1440,
+        -48
+      ],
+      "id": "8e57eb8e-ac23-40ac-9736-27b75fb3c52e",
+      "name": "Post to LinkedIn",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "PwTiNC2RZSuxzk7K",
+          "name": "LinkedIn account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linkedin.com/rest/images?action=initializeUpload",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "linkedInOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Linkedin-Version",
+              "value": "202607"
+            },
+            {
+              "name": "X-Restli-Protocol-Version",
+              "value": "2.0.0"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"initializeUploadRequest\": {\n    \"owner\": \"urn:li:organization:143131934\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        624,
+        -48
+      ],
+      "id": "bba4aff2-a8cf-4f4e-9a69-ce4a333187a9",
+      "name": "Initialize LinkedIn Media",
+      "credentials": {
+        "linkedInOAuth2Api": {
+          "id": "PwTiNC2RZSuxzk7K",
+          "name": "LinkedIn account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const initItems = $('Initialize LinkedIn Media').all();\nconst downloadItems = $('Download file').all();\n\nreturn initItems.map((init, index) => ({\n  json: init.json,\n  binary: downloadItems[index]?.binary || {}\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        -48
+      ],
+      "id": "826a91db-6e55-49d2-bee3-b7b266c2e553",
+      "name": "Carry Binary"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Initialize LinkedIn Media').item.json.value.uploadUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "image/png"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "img_binary",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1216,
+        -48
+      ],
+      "id": "27c057ad-9e1d-4a5d-b085-55fe6812821c",
+      "name": "Put binary to LinkedIn"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Read Ready Rows').item.json['Media (insert Google Drive Link)'] }}",
+          "mode": "url"
+        },
+        "options": {
+          "binaryPropertyName": "img_binary"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -352,
+        176
+      ],
+      "id": "3d49fab8-5a3f-4286-a75e-1155f23b4a7c",
+      "name": "Download file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "gqWKFBsJn2t9g2pc",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/gvcxmenx/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "img_binary"
+            },
+            {
+              "name": "upload_preset",
+              "value": "instagram_n8n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        128,
+        288
+      ],
+      "id": "168bace8-1e99-4a1f-ab9a-2a3144388937",
+      "name": "Cloudinary",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        320,
+        288
+      ],
+      "id": "05bb9feb-5978-4daf-94bf-e2ae8e196b65",
+      "name": "Wait for Cloudinary",
+      "webhookId": "f06873f3-63c9-4d52-a9eb-c68e4ed8cf71",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1600,
+        464
+      ],
+      "id": "c01a95c5-4601-4680-b0c4-ad6822d40a94",
+      "name": "Wait for Container",
+      "webhookId": "f06873f3-63c9-4d52-a9eb-c68e4ed8cf71"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE",
+          "mode": "list",
+          "cachedResultName": "Marketing Automation",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Publisher",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1ytqn-V2_1ZmgfzH9gnctcLcISnq46GAhYByDaahQ-eE/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "post_id": "={{ $json.post_id }}",
+            "FB Status": "={{ $json['FB Status'] }}",
+            "IG Status": "={{ $json['IG Status'] }}",
+            "LinkedIn Status": "={{ $json['LinkedIn Status'] }}",
+            "Last Status Update": "={{ (() => {\n  const d = new Date($json['Last Status Update']);\n  const parts = new Intl.DateTimeFormat('en-US', {\n    timeZone: 'Asia/Manila',\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    hour: 'numeric',\n    minute: '2-digit',\n    hour12: true\n  }).formatToParts(d);\n\n  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));\n\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${p.dayPeriod}`;\n})() }}"
+          },
+          "matchingColumns": [
+            "post_id"
+          ],
+          "schema": [
+            {
+              "id": "post_id",
+              "displayName": "post_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Caption",
+              "displayName": "Caption",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Media (insert Google Drive Link)",
+              "displayName": "Media (insert Google Drive Link)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Action",
+              "displayName": "Action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Platform",
+              "displayName": "Platform",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Schedule",
+              "displayName": "Schedule",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "FB Status",
+              "displayName": "FB Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "IG Status",
+              "displayName": "IG Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "LinkedIn Status",
+              "displayName": "LinkedIn Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Status Update",
+              "displayName": "Last Status Update",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Remarks",
+              "displayName": "Remarks",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -544,
+        176
+      ],
+      "id": "1de49df0-90c8-4168-9bda-273a85b310de",
+      "name": "Update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "V0qxyjPZsvSC8EFM",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const preparedRows = $('Prepare Rows').all();\n\nreturn $input.all()\n  .map(item => {\n    const postId = String(item.json.post_id);\n\n    const row = preparedRows.find(\n      p => String(p.json.post_id) === postId\n    );\n\n    return {\n      json: {\n        ...item.json,\n        Caption: row?.json.Caption,\n        postFacebook: row?.json.postFacebook,\n        postInstagram: row?.json.postInstagram,\n      },\n      binary: item.binary,\n    };\n  })\n  .filter(item =>\n    item.json.postFacebook === 'yes' ||\n    item.json.postInstagram === 'yes'\n  );"
+      },
+      "id": "5e165a21-98e5-4f89-b7b7-66ecf3ad0527",
+      "name": "Filter FB or IG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        288
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "28dbccf5-7ec2-49de-84f8-7e9e0f61ccf0",
+              "leftValue": "={{ $('Filter FB or IG').item.json.postFacebook }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        608,
+        208
+      ],
+      "id": "7ba76c0f-ab51-4e2f-8f65-6dce9380085d",
+      "name": "If",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "28dbccf5-7ec2-49de-84f8-7e9e0f61ccf0",
+              "leftValue": "={{ $('Filter FB or IG').item.json.postInstagram }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        608,
+        480
+      ],
+      "id": "1654a29b-3fbb-4534-bdb1-378b29d883fb",
+      "name": "If1",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.fb_page_id }}/photos",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $json.fb_page_token }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $('Cloudinary').item.json.secure_url }}"
+            },
+            {
+              "name": "published",
+              "value": "false"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c796b564-b7fe-4f7c-9a73-3b89e1e11f71",
+      "name": "Upload FB Photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1440,
+        192
+      ]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read Ready Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Ready Rows": {
+      "main": [
+        [
+          {
+            "node": "Prepare Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Rows": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Initialize LinkedIn Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag LinkedIn Result": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Aggregate By Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Facebook Result": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Tag Instagram Result": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Aggregate By Row": {
+      "main": [
+        [
+          {
+            "node": "Update Row Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Page Token": {
+      "main": [
+        [
+          {
+            "node": "Upload FB Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Token": {
+      "main": [
+        [
+          {
+            "node": "Get Page Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to FB": {
+      "main": [
+        [
+          {
+            "node": "Tag Facebook Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Token (IG)": {
+      "main": [
+        [
+          {
+            "node": "Get Page Token (IG)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Page Token (IG)": {
+      "main": [
+        [
+          {
+            "node": "Get Instagram Account",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Instagram Account": {
+      "main": [
+        [
+          {
+            "node": "Create Instagram Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Instagram Container": {
+      "main": [
+        [
+          {
+            "node": "Wait for Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to IG": {
+      "main": [
+        [
+          {
+            "node": "Tag Instagram Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Tag LinkedIn Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize LinkedIn Media": {
+      "main": [
+        [
+          {
+            "node": "Carry Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carry Binary": {
+      "main": [
+        [
+          {
+            "node": "Put binary to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Put binary to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download file": {
+      "main": [
+        [
+          {
+            "node": "Filter LinkedIn",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Filter FB or IG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "Wait for Cloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Container": {
+      "main": [
+        [
+          {
+            "node": "Post to IG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Download file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter FB or IG": {
+      "main": [
+        [
+          {
+            "node": "Cloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Request Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Request Token (IG)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload FB Photo": {
+      "main": [
+        [
+          {
+            "node": "Post to FB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "errorWorkflow": "whGfoqFZh35UNHBP",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "pinData": {},
+  "triggerCount": 0,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
